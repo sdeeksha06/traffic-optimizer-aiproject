@@ -4,6 +4,7 @@ from math import radians, sin, cos, sqrt, atan2
 import heapq
 
 from data.mock_data import CITIES, GRAPH
+from weather_utils import get_weather_delay
 
 app = Flask(__name__)
 CORS(app)
@@ -157,6 +158,45 @@ def get_route():
 def get_city_coords():
     # Returns mapping of city name to {lat, lon}
     return jsonify(CITIES)
+
+
+@app.post("/api/update_weather")
+def update_weather():
+    # Iterate over all cities and update weather impacts on all connected edges
+    summary = {}
+    for city, coords in CITIES.items():
+        lat, lon = coords["lat"], coords["lon"]
+        info = get_weather_delay(city, lat, lon)
+        condition = info.get("condition", "Unknown")
+        delay = int(info.get("delay_min", 0))
+        risk = float(info.get("risk", 1.0))
+
+        summary[city] = {"condition": condition, "delay_min": delay, "risk": round(risk, 2)}
+
+        # Update all edges from this city
+        neighbors = list(GRAPH.get(city, {}).keys())
+        for nb in neighbors:
+            # Ensure reverse edge exists
+            if nb not in GRAPH:
+                GRAPH[nb] = {}
+            if city not in GRAPH[nb]:
+                # If reverse edge missing, mirror minimal details
+                dist = GRAPH[city][nb].get("distance_km", 0)
+                GRAPH[nb][city] = {
+                    "distance_km": dist,
+                    "traffic_min": GRAPH[city][nb].get("traffic_min", 0),
+                    "weather_min": 0,
+                    "risk": 1.0,
+                }
+
+            GRAPH[city][nb]["weather_min"] = delay
+            GRAPH[city][nb]["risk"] = risk
+            GRAPH[nb][city]["weather_min"] = delay
+            GRAPH[nb][city]["risk"] = risk
+
+    # Print for server logs and return to client
+    print("Weather summary:", summary)
+    return jsonify(summary)
 
 
 if __name__ == "__main__":
