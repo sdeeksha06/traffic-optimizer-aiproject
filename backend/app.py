@@ -6,6 +6,16 @@ import heapq
 from data.mock_data import CITIES, GRAPH
 from weather_utils import get_weather_delay
 
+# Ensure project root is on sys.path so 'ml' package is importable when running this file
+from pathlib import Path as _Path
+import sys as _sys
+_PROJECT_ROOT = str(_Path(__file__).resolve().parents[1])
+if _PROJECT_ROOT not in _sys.path:
+    _sys.path.insert(0, _PROJECT_ROOT)
+
+from ml.src.predict_travel_time import predict_travel_time
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -77,6 +87,7 @@ def route_breakdown(path):
     total_weather = 0.0
     compounded_risk_effect = 0.0  # additional minutes due to risk
     total_time = 0.0
+    risk_sum = 0.0
 
     legs = []
     for i in range(len(path) - 1):
@@ -96,6 +107,7 @@ def route_breakdown(path):
         total_weather += weather
         compounded_risk_effect += time_with_risk - time_with_delays
         total_time += time_with_risk
+        risk_sum += risk
 
         legs.append({
             "from": a,
@@ -107,12 +119,29 @@ def route_breakdown(path):
             "estimated_time_min": round(time_with_risk, 2),
         })
 
+    # Predict total travel time using the trained model
+    model_predicted_total_time_min = None
+    try:
+        n_legs = max(1, len(path) - 1)
+        avg_risk_multiplier = (risk_sum / n_legs) if n_legs > 0 else 1.0
+        risk_factor = max(0.0, avg_risk_multiplier - 1.0)
+        features = {
+            "distance_km": total_distance,
+            "traffic_delay_min": total_traffic,
+            "weather_delay_min": total_weather,
+            "risk_factor": risk_factor,
+        }
+        model_predicted_total_time_min = predict_travel_time(features)
+    except Exception:
+        model_predicted_total_time_min = None
+
     return {
         "total_distance_km": round(total_distance, 2),
         "total_traffic_min": round(total_traffic, 2),
         "total_weather_min": round(total_weather, 2),
         "risk_extra_time_min": round(compounded_risk_effect, 2),
         "estimated_total_time_min": round(total_time, 2),
+        "model_predicted_total_time_min": None if model_predicted_total_time_min is None else round(model_predicted_total_time_min, 2),
         "legs": legs,
     }
 
